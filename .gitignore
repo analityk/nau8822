@@ -1,5 +1,5 @@
 *.debug
-*.atsuo.
+*.atsuo
 *.xml
 *.cppproj
 *.eep
