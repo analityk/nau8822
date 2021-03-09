@@ -10,7 +10,6 @@
 #include <delay.h>
 #include <i2c_soft.h>
 #include <serial.h>
-#include <nau8822_types.h>
 
 int main(void)
 {
@@ -49,8 +48,8 @@ int main(void)
 	s_alc_control_3 alcr3 = { .alcm=0, .alcdcy=5, .alcatk=10 };
 	s_noise_gate noisegate= { .alcnen=0, .alcnth=4 };
 
-	// on avr i cant use non-trival list initialization
-	// and you can make pointer to bitfield
+	// on avr i cant use non-trival list initializer
+	// and you can't make pointer to bitfield
 	// so you have to do this way or look at example with power_1
 	snau8822.alc_control_1 = alcr1;
 	snau8822.alc_control_2 = alcr2;
