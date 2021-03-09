@@ -233,6 +233,14 @@ uint16_t nau8822_left_in_mix_src(enum e_left_in_mix_srcs ms, uint8_t gain)
 	return 0;
 };
 
+void nau8822_set_alc(void)
+{
+	nau8822_set_alc_1(&snau8822.alc_control_1);
+	nau8822_set_alc_2(&snau8822.alc_control_2);
+	nau8822_set_alc_3(&snau8822.alc_control_3);
+	nau8822_set_noise_gate(&snau8822.noise_gate);
+};
+
 uint16_t nau8822_set_power_1(s_power_1* pw)
 {
 	uint16_t t = (pw->abiasen << ABIASEN) | (pw->aux1mxen << AUX1MXEN) | (pw->aux2mxen << AUX2MXEN) | (pw->dcbufen << DCBUFEN) |

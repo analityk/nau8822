@@ -6,6 +6,7 @@
 #include <nau8822_code/nau8822_hardware.h>
 #include <nau8822_code/nau8822_types.h>
 
+extern ts_nau8822 snau8822;
 
 #ifdef __cplusplus
 extern "C" {
@@ -49,14 +50,13 @@ uint16_t nau8822_rspk_submix_src(enum e_submix_srcs ms);							// rauxin or rmix
 // https://www.youtube.com/watch?v=RilggJd1_LY - this guy use alc in his mic. He is loud but never too
 // in 3 word: cool awsome nice future that you have to buy now...
 // lets back on ground
+// because you have to know how it work and how to setup it in your enviroment
+// i don't write here any high level api
+// lets look at example
 
-
-//#ifdef LEVEL_HIGH_API
-//uint16_t nau8822_power_reg_1(uint16_t mask);
-//uint16_t nau8822_power_reg_2(uint16_t mask);
-//uint16_t nau8822_power_reg_3(uint16_t mask);
-//#endif
-
+// but this function get your 4 register param and set it to proper register
+// however you may do it yourself
+void nau8822_set_alc(void);
 
 uint16_t nau8822_set_power_1(s_power_1* pw);	// ok
 uint16_t nau8822_set_power_2(s_power_2* pw);	// ok
