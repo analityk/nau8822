@@ -3,6 +3,8 @@
 
 #include <avr/io.h>
 
+enum e_gains{ gain_lauxin_to_lmainmix, gain_linmix_to_lmainmix, gain_lpga, gain_llin, };
+
 enum e_left_pga_src{ e_left_pga_mic, e_left_pga_lin };
 enum e_right_pga_src{ e_right_pga_mic, e_right_pga_lin };
 enum e_left_in_mix_srcs{ e_lim_Left_PGA, e_lim_LeftLine, e_lim_LeftAux };

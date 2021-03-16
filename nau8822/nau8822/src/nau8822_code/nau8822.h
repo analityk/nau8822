@@ -12,6 +12,8 @@ extern ts_nau8822 snau8822;
 extern "C" {
 #endif
 
+uint16_t nau8822_gain(enum e_gains g);
+
 uint16_t nau8822_mic_bias_voltage(enum e_mic_bias_levels mbl);		// voltage is equal to vdda times setting factor
 uint16_t nau8822_3d_enhancement(uint8_t level);						// 0 - off, 15 - max;
 
