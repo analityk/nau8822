@@ -16,7 +16,7 @@ int main(void)
 
 	Serial.SetUbrr(103);
 	Serial.SetUbrr(103); // 9600
-	
+
 	nau8822_register_write(0,0);
 
 	//s_audio_interface i2s = { .bclkp=0, .lrp=0, .wlen=WLEN_16, .aifmt=I2S_STANDARD, .dacphs=0, .adcphs=0, .mono=0 };
@@ -43,10 +43,10 @@ int main(void)
 	//// read carefull datasheet
 	//// https://www.nuvoton.com/resource-files/NAU8822LDataSheetRev1.9.pdf
 //
-	//s_alc_control_1 alcr1 = { .alcen=ALCEN_BOOTH_EN, .alcmxgain=7, .alcmngain=0 };
-	//s_alc_control_2 alcr2 = { .alcht=10, .alcsl=5 };
-	//s_alc_control_3 alcr3 = { .alcm=0, .alcdcy=5, .alcatk=10 };
-	//s_noise_gate noisegate= { .alcnen=0, .alcnth=4 };
+	s_alc_control_1 alcr1 = { .alcen=ALCEN_BOOTH_EN, .alcmxgain=7, .alcmngain=0 };
+	s_alc_control_2 alcr2 = { .alcht=10, .alcsl=5 };
+	s_alc_control_3 alcr3 = { .alcm=0, .alcdcy=5, .alcatk=10 };
+	s_noise_gate noisegate= { .alcnen=0, .alcnth=4 };
 //
 	//// on avr i cant use non-trival list initializer
 	//// and you can't make pointer to bitfield
@@ -56,7 +56,8 @@ int main(void)
 	//snau8822.alc_control_3 = alcr3;
 	//snau8822.noise_gate = noisegate;
 //
-	//nau8822_set_alc();
+	nau8822_set_alc();
+
 
 //
 	//uint8_t lsb = t;
