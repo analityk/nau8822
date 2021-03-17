@@ -2,9 +2,86 @@
 
 ts_nau8822 snau8822;
 
+
+
+void nau8822_mute_all(void)
+{
+	s_input_control ic = { .micbiasv=0,.rlinrpga=0,.rmicnrpga=0,.rmicprpga=0,.llinlpga=0,.lmicnlpga=0,.lmicplpga=0 };
+	snau8822.input_control = ic;
+	nau8822_set_input_control(&snau8822.input_control);
+
+	snau8822.right_speaker_submixer.rauxmut = 1;
+	snau8822.right_speaker_submixer.rmixmut = 1;
+	nau8822_set_right_speaker_submixer(&snau8822.right_speaker_submixer);
+
+	snau8822.lhp_volume.lhpmute = 1;
+	nau8822_set_lhp_vol(&snau8822.lhp_volume);
+
+	snau8822.rhp_volume.rhpmute = 1;
+	nau8822_set_rhp_vol(&snau8822.rhp_volume);
+
+	snau8822.lspkput_volume.lspkmute = 1;
+	nau8822_set_lspkout_vol(&snau8822.lspkput_volume);
+
+	snau8822.rspkput_volume.rspkmute = 1;
+	nau8822_set_rspkout_vol(&snau8822.rspkput_volume);
+
+	snau8822.aux_1_mixer.auxout1mt = 1;
+	nau8822_set_aux_1_mix(&snau8822.aux_1_mixer);
+
+	snau8822.aux_2_mixer.auxout2mt = 1;
+	nau8822_set_aux_2_mix(&snau8822.aux_2_mixer);
+};
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+void nau8822_power_up(void)
+{
+	nau8822_mute_all();
+	snau8822.clock_contorl_1.bclksel = 2;
+	snau8822.clock_contorl_1.clkioen = 1;
+	snau8822.clock_contorl_1.mclksel = 2;
+	snau8822.clock_contorl_1.clkm = 1;
+	nau8822_set_clock_control_1(&snau8822.clock_contorl_1);
+
+	s_power_1 power_1 = { .dcbufen=1, .aux1mxen=1, .aux2mxen=1, .pllen=0, .micbiasen=1, .abiasen=1, .iobufen=1, .refimp=REFIMP_3k };
+	nau8822_set_power_1(&power_1);
+
+	s_power_2 power_2 = { .rhpen=1, .lhpen=1, .sleep=0, .rbsten=1, .lbsten=1, .rpgaen=1, .lpgaen=1, .radcen=1, .ladcen=1 };
+	nau8822_set_power_2(&power_2);
+
+	s_power_3 power_3 = { .auxout1en=1, .auxout2en=1, .lspken=1, .rspken=1, .rmixen=1, .lmixen=1, .rdacen=1, .ldacen=1 };
+	nau8822_set_power_3(&power_3);
+
+	//uint32_t naupllcfg = 0x86c226;
+//
+	//uint16_t a =  naupllcfg;
+	//uint16_t b = (naupllcfg >> 9);
+	//uint16_t c = (naupllcfg >> 18);
+//
+	//snau8822.pll_n.plln = 8;
+	//nau8822_set_plln(&snau8822.pll_n);
+//
+	//snau8822.pll_k1.pllk1 = a;
+	//nau8822_set_pllk1(&snau8822.pll_k1);
+//
+	//snau8822.pll_k2.pllk2 = b;
+	//nau8822_set_pllk2(&snau8822.pll_k2);
+//
+	//snau8822.pll_k3.pllk3 = c;
+	//nau8822_set_pllk3(&snau8822.pll_k3);
+
+	nau8822_register_write(36, 0x007);
+	nau8822_register_write(37, 0x0a1); // im wiêksza wartoœæ tym szybciej odtwarza
+	nau8822_register_write(38, 0x15f);
+	nau8822_register_write(39, 0x126);
+
+	power_1.pllen = 1;
+	nau8822_set_power_1(&power_1);
+
+};
 
 uint16_t nau8822_mic_bias_voltage(enum e_mic_bias_levels mbl)
 {
@@ -200,9 +277,13 @@ uint16_t nau8822_headphone_volume(uint8_t left, uint8_t right)
 		snau8822.lhp_volume.lhpgain = left;
 		snau8822.rhp_volume.rhpgain = right;
 	};
-	uint16_t t = nau8822_set_rhp_vol(&snau8822.rhp_volume) << 8;
-	t = nau8822_set_lhp_vol(&snau8822.lhp_volume);
-	return t;
+
+	snau8822.lhp_volume.lhpmute = 0;
+	snau8822.rhp_volume.rhpmute = 0;
+
+	nau8822_set_rhp_vol(&snau8822.rhp_volume);
+	nau8822_set_lhp_vol(&snau8822.lhp_volume);
+	return 0;
 };
 
 uint16_t nau8822_speaker_volume(uint8_t left, uint8_t right)
@@ -226,6 +307,95 @@ uint16_t nau8822_left_in_mix_src(enum e_left_in_mix_srcs ms, uint8_t gain)
 			break;
 		};
 		case e_lim_Left_PGA:{
+			break;
+		};
+		default:break;
+	};
+	return 0;
+};
+
+uint16_t nau8822_left_pga_in_src(enum e_left_pga_src ms, uint8_t gain)
+{
+	switch(ms){
+		case e_left_pga_mic:{
+			snau8822.input_control.llinlpga = 0;
+			snau8822.input_control.lmicnlpga = 1;
+			snau8822.input_control.lmicnlpga = 1;
+			nau8822_set_input_control(&snau8822.input_control);
+
+			if( (gain >= 0) && (gain <= 0x3F) ){
+				snau8822.left_input_pga.lpgagain = gain;
+			};
+
+			snau8822.left_input_pga.lpgau = 1;
+			snau8822.left_input_pga.lpgazc = 1;
+			snau8822.left_input_pga.lpgamt = 0;
+			nau8822_set_left_pga(&snau8822.left_input_pga);
+
+			break;
+		};
+		case e_left_pga_lin:{
+			snau8822.input_control.llinlpga = 1;
+			snau8822.input_control.lmicnlpga = 0;
+			snau8822.input_control.lmicnlpga = 0;
+
+			if( (gain >= 0) && (gain <= 0x3F) ){
+				snau8822.left_input_pga.lpgagain = gain;
+			};
+
+			snau8822.left_input_pga.lpgau = 1;
+			snau8822.left_input_pga.lpgazc = 1;
+			snau8822.left_input_pga.lpgamt = 0;
+			nau8822_set_left_pga(&snau8822.left_input_pga);
+			break;
+		};
+		default:break;
+	};
+	return 0;
+};
+
+uint16_t nau8822_left_main_mix_src(enum e_left_main_mix_srcs ms, uint8_t gain)
+{
+	switch(ms){
+		case e_lmm_LeftAux:{
+			if(gain > 7){
+				gain = 7;
+			};
+			snau8822.left_mixer.lauxlmx = 1;
+			snau8822.left_mixer.lauxmxgain = gain;
+			nau8822_set_left_main_mixer(&snau8822.left_mixer);
+			break;
+		};
+
+		case e_lmm_LeftDAC:{
+			if(gain > 255){
+				gain = 255;
+			};
+			snau8822.left_dac_volume.ldacvu = 1;
+			snau8822.left_dac_volume.ldacgain = gain;
+			nau8822_set_left_dac_vol(&snau8822.left_dac_volume);
+
+			snau8822.left_mixer.ldaclmx = 1;
+			nau8822_set_left_main_mixer(&snau8822.left_mixer);
+			break;
+		};
+
+		case e_lmm_RightDAC:{
+			snau8822.right_mixer.rdacrmx = 0;
+			nau8822_set_right_main_mixer(&snau8822.right_mixer);
+
+			snau8822.output_control.rdaclmx = 1;
+			nau8822_set_output_control(&snau8822.output_control);
+			break;
+		};
+
+		case e_lmm_LeftInputMixer:{
+			if(gain > 7){
+				gain = 7;
+			};
+			snau8822.left_mixer.lbyplmx = 1;
+			snau8822.left_mixer.lbypmxgain = gain;
+			nau8822_set_left_main_mixer(&snau8822.left_mixer);
 			break;
 		};
 		default:break;
