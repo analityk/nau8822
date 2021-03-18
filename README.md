@@ -1,4 +1,4 @@
-# nau8822
+# NAU8822
 8 analog inputs;
 I2S/PCM/a/b/time slot;
 32b 48kHz ADC and DAC;
