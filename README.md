@@ -35,4 +35,4 @@ Data from pc was sended in UDP packets into SAM E70 uC and from here into codec 
 This chip is cheap and awesome and if you want to try it without build own pcb - you can 
 use (in near future, currently is under tests) my board and my drivers.
 
-Have a nice day!
+Have a nice day! 
