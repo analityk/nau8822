@@ -320,7 +320,7 @@ uint16_t nau8822_left_pga_in_src(enum e_left_pga_src ms, uint8_t gain)
 		case e_left_pga_mic:{
 			snau8822.input_control.llinlpga = 0;
 			snau8822.input_control.lmicnlpga = 1;
-			snau8822.input_control.lmicnlpga = 1;
+			snau8822.input_control.lmicplpga = 1;
 			nau8822_set_input_control(&snau8822.input_control);
 
 			if( (gain >= 0) && (gain <= 0x3F) ){
@@ -337,7 +337,7 @@ uint16_t nau8822_left_pga_in_src(enum e_left_pga_src ms, uint8_t gain)
 		case e_left_pga_lin:{
 			snau8822.input_control.llinlpga = 1;
 			snau8822.input_control.lmicnlpga = 0;
-			snau8822.input_control.lmicnlpga = 0;
+			snau8822.input_control.lmicplpga = 0;
 
 			if( (gain >= 0) && (gain <= 0x3F) ){
 				snau8822.left_input_pga.lpgagain = gain;
@@ -353,6 +353,46 @@ uint16_t nau8822_left_pga_in_src(enum e_left_pga_src ms, uint8_t gain)
 	};
 	return 0;
 };
+
+uint16_t nau8822_right_pga_in_src(enum e_right_pga_src ms, uint8_t gain)
+{
+	switch(ms){
+		case e_left_pga_mic:{
+			snau8822.input_control.rlinrpga = 0;
+			snau8822.input_control.rmicnrpga = 1;
+			snau8822.input_control.rmicprpga = 1;
+			nau8822_set_input_control(&snau8822.input_control);
+
+			if( (gain >= 0) && (gain <= 0x3F) ){
+				snau8822.right_input_pga.rpgagain = gain;
+			};
+
+			snau8822.right_input_pga.rpgau = 1;
+			snau8822.right_input_pga.rpgazc = 1;
+			snau8822.right_input_pga.rpgamt = 0;
+			nau8822_set_right_pga(&snau8822.right_input_pga);
+
+			break;
+		};
+		case e_left_pga_lin:{
+			snau8822.input_control.rlinrpga = 1;
+			snau8822.input_control.rmicnrpga = 0;
+			snau8822.input_control.rmicprpga = 0;
+
+			if( (gain >= 0) && (gain <= 0x3F) ){
+				snau8822.right_input_pga.rpgagain = gain;
+			};
+
+			snau8822.right_input_pga.rpgau = 1;
+			snau8822.right_input_pga.rpgazc = 1;
+			snau8822.right_input_pga.rpgamt = 0;
+			nau8822_set_right_pga(&snau8822.right_input_pga);
+			break;
+		};
+		default:break;
+	};
+	return 0;
+}
 
 uint16_t nau8822_left_main_mix_src(enum e_left_main_mix_srcs ms, uint8_t gain)
 {
@@ -402,6 +442,55 @@ uint16_t nau8822_left_main_mix_src(enum e_left_main_mix_srcs ms, uint8_t gain)
 	};
 	return 0;
 };
+
+uint16_t nau8822_right_main_mix_src(enum e_right_main_mix_srcs ms, uint8_t gain)
+{
+	switch(ms){
+		case e_rmm_RightAux:{
+			if(gain > 7){
+				gain = 7;
+			};
+			snau8822.right_mixer.rauxrmx = 1;
+			snau8822.right_mixer.rbypmxgain = gain;
+			nau8822_set_right_main_mixer(&snau8822.right_mixer);
+			break;
+		};
+
+		case e_rmm_RightDAC:{
+			if(gain > 255){
+				gain = 255;
+			};
+			snau8822.right_dac_volume.rdacvu = 1;
+			snau8822.right_dac_volume.rdacgain = gain;
+			nau8822_set_right_dac_vol(&snau8822.right_dac_volume);
+
+			snau8822.right_mixer.rdacrmx = 1;
+			nau8822_set_right_main_mixer(&snau8822.right_mixer);
+			break;
+		};
+
+		case e_rmm_LeftDAC:{
+			snau8822.left_mixer.ldaclmx = 0;
+			nau8822_set_left_main_mixer(&snau8822.left_mixer);
+
+			snau8822.output_control.ldacrmx = 1;
+			nau8822_set_output_control(&snau8822.output_control);
+			break;
+		};
+
+		case e_rmm_RightInputMixer:{
+			if(gain > 7){
+				gain = 7;
+			};
+			snau8822.right_mixer.rbyprmx = 1;
+			snau8822.right_mixer.rbypmxgain = gain;
+			nau8822_set_right_main_mixer(&snau8822.right_mixer);
+			break;
+		};
+		default:break;
+	};
+	return 0;
+}
 
 void nau8822_set_alc(void)
 {
