@@ -1,5 +1,29 @@
 # NAU8822
-8 analog inputs; I2S/PCM/a/b/time slot; 32b 48kHz ADC and DAC; digital high pass filter; automatic gain control for left and right differential (mic)/line input; notch filter; 5 band equalizer; 3D enchancement; DAC Dither; 6 analog mixers + 1 for differential output (power up to 1W); PLL - clock input from 8MHz to 33MHz; low noise bias current for electret mic; controlled by simple I2C interface;
+8 analog inputs; 
+
+I2S/PCM/a/b/time slot; 
+
+32b 48kHz ADC and DAC; 
+
+digital high pass filter; 
+
+automatic gain control for left and right differential (mic)/line input; 
+
+notch filter; 
+
+5 band equalizer; 
+
+3D enchancement; 
+
+DAC Dither; 
+
+6 analog mixers + 1 for differential output (power up to 1W); 
+
+PLL - clock input from 8MHz to 33MHz; 
+
+low noise bias current for electret mic; 
+
+controlled by simple I2C interface;
 
 https://www.nuvoton.com/resource-files/NAU8822LDataSheetRev1.9.pdf
 
