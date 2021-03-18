@@ -28,6 +28,5 @@
 *.out
 *.app
 *.atsln
-Debug/**
+debug/**
 release/**
-Makefile/**
