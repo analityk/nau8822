@@ -7,15 +7,15 @@
 extern "C" {
 #endif
 
-#define I2C_SDA_DDR		(DDRB)
-#define I2C_SDA_PORT	(PORTB)
-#define I2C_SDA_PIN		(PINB)
+#define I2C_SDA_DDR		(DDRD)
+#define I2C_SDA_PORT	(PORTD)
+#define I2C_SDA_PIN		(PIND)
 
-#define I2C_SCL_DDR		(DDRB)
-#define I2C_SCL_PORT	(PORTB)
+#define I2C_SCL_DDR		(DDRD)
+#define I2C_SCL_PORT	(PORTD)
 
-#define I2C_SDA		(PINB2)
-#define I2C_SCL		(PINB3)
+#define I2C_SDA		(PIND4)
+#define I2C_SCL		(PIND5)
 
 #define I2C_DELAY	70
 
@@ -27,9 +27,9 @@ extern "C" {
 #define SET_SCL { pio_set(I2C_SCL_PIO, I2C_SCL);   }
 #elif AVR_UC
 #define CLR_SDA { I2C_SDA_DDR |= (1<<I2C_SDA); I2C_SDA_PORT &=~(1<<I2C_SDA); }
-#define SET_SDA { I2C_SDA_DDR |= (0<<I2C_SDA); I2C_SDA_PORT |= (1<<I2C_SDA); } // input in hi-z but pull-up'ed
+#define SET_SDA { I2C_SDA_DDR &=~ (1<<I2C_SDA); I2C_SDA_PORT |= (1<<I2C_SDA); } // input in hi-z but pull-up'ed
 #define CLR_SCL { I2C_SCL_DDR |= (1<<I2C_SCL); I2C_SCL_PORT &=~(1<<I2C_SCL); }
-#define SET_SCL { I2C_SCL_DDR |= (1<<I2C_SCL); I2C_SCL_PORT |= (1<<I2C_SCL); } // input in hi-z but pull-up'ed
+#define SET_SCL { I2C_SCL_DDR &=~ (1<<I2C_SCL); I2C_SCL_PORT |= (1<<I2C_SCL); } // input in hi-z but pull-up'ed
 #else
 #error "make your own scl and sda macros"
 #endif

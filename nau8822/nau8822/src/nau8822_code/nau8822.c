@@ -6,9 +6,7 @@ ts_nau8822 snau8822;
 
 void nau8822_mute_all(void)
 {
-	s_input_control ic = { .micbiasv=0,.rlinrpga=0,.rmicnrpga=0,.rmicprpga=0,.llinlpga=0,.lmicnlpga=0,.lmicplpga=0 };
-	snau8822.input_control = ic;
-	nau8822_set_input_control(&snau8822.input_control);
+	nau8822_set_input_control(0);
 
 	snau8822.right_speaker_submixer.rauxmut = 1;
 	snau8822.right_speaker_submixer.rmixmut = 1;
@@ -55,28 +53,30 @@ void nau8822_power_up(void)
 	s_power_3 power_3 = { .auxout1en=1, .auxout2en=1, .lspken=1, .rspken=1, .rmixen=1, .lmixen=1, .rdacen=1, .ldacen=1 };
 	nau8822_set_power_3(&power_3);
 
-	//uint32_t naupllcfg = 0x86c226;
-//
-	//uint16_t a =  naupllcfg;
-	//uint16_t b = (naupllcfg >> 9);
-	//uint16_t c = (naupllcfg >> 18);
-//
-	//snau8822.pll_n.plln = 8;
+	uint32_t naupllcfg = 0x86c226;
+
+	uint16_t a =  naupllcfg;
+	uint16_t b = (naupllcfg >> 9);
+	uint16_t c = (naupllcfg >> 18);
+
+	snau8822.pll_n.plln = 8;
 	//nau8822_set_plln(&snau8822.pll_n);
-//
-	//snau8822.pll_k1.pllk1 = a;
+
+	snau8822.pll_k1.pllk1 = a;
 	//nau8822_set_pllk1(&snau8822.pll_k1);
-//
-	//snau8822.pll_k2.pllk2 = b;
+
+	snau8822.pll_k2.pllk2 = b;
 	//nau8822_set_pllk2(&snau8822.pll_k2);
-//
-	//snau8822.pll_k3.pllk3 = c;
+
+	snau8822.pll_k3.pllk3 = c;
 	//nau8822_set_pllk3(&snau8822.pll_k3);
 
 	nau8822_register_write(36, 0x007);
 	nau8822_register_write(37, 0x0a1); // im wiêksza wartoœæ tym szybciej odtwarza
 	nau8822_register_write(38, 0x15f);
 	nau8822_register_write(39, 0x126);
+
+	delay(0xFFF);
 
 	power_1.pllen = 1;
 	nau8822_set_power_1(&power_1);
@@ -273,13 +273,18 @@ uint16_t nau8822_equ_band_5(enum e_equ_band_5 eb5, int8_t level)
 
 uint16_t nau8822_headphone_volume(uint8_t left, uint8_t right)
 {
-	if( (left < 64) && (right < 64) ){
+	if( (left <= 63) && (right <= 63) ){
 		snau8822.lhp_volume.lhpgain = left;
 		snau8822.rhp_volume.rhpgain = right;
 	};
 
-	snau8822.lhp_volume.lhpmute = 0;
-	snau8822.rhp_volume.rhpmute = 0;
+	if( (left > 0) && (right > 0) ){
+		snau8822.rhp_volume.rhpmute = 0;
+		snau8822.lhp_volume.lhpmute = 0;
+	}else{
+		snau8822.rhp_volume.rhpmute = 1;
+		snau8822.lhp_volume.lhpmute = 1;
+	};
 
 	nau8822_set_rhp_vol(&snau8822.rhp_volume);
 	nau8822_set_lhp_vol(&snau8822.lhp_volume);
@@ -301,6 +306,10 @@ uint16_t nau8822_left_in_mix_src(enum e_left_in_mix_srcs ms, uint8_t gain)
 {
 	switch(ms){
 		case e_lim_LeftAux:{
+			snau8822.left_adc_boost.lauxbstgain = gain;
+			snau8822.left_adc_boost.lpgabst = 0;
+			snau8822.left_adc_boost.lpgabstgain = 0;
+			nau8822_set_left_adc_boost(&snau8822.left_adc_boost);
 			break;
 		};
 		case e_lim_LeftLine:{
@@ -313,6 +322,29 @@ uint16_t nau8822_left_in_mix_src(enum e_left_in_mix_srcs ms, uint8_t gain)
 	};
 	return 0;
 };
+
+
+uint16_t nau8822_right_in_mix_src(enum e_right_in_mix_srcs ms, uint8_t gain)
+{
+	switch(ms){
+		case e_rim_RightAux:{
+			snau8822.right_adc_boost.rauxbstgain = gain;
+			snau8822.right_adc_boost.rpgabst = 0;
+			snau8822.right_adc_boost.rpgabstgain = 0;
+			nau8822_set_right_adc_boost(&snau8822.right_adc_boost);
+			break;
+		};
+		case e_rim_RightLine:{
+			break;
+		};
+		case e_rim_Right_PGA:{
+			break;
+		};
+		default:break;
+	};
+	return 0;
+};
+
 
 uint16_t nau8822_left_pga_in_src(enum e_left_pga_src ms, uint8_t gain)
 {

@@ -18,4 +18,3 @@ uint8_t nau8822_register_write(uint8_t reg_number, uint16_t reg_value)
 #ifdef __cplusplus
 }
 #endif
-

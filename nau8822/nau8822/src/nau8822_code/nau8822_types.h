@@ -8,7 +8,7 @@ enum e_gains{ gain_lauxin_to_lmainmix, gain_linmix_to_lmainmix, gain_lpga, gain_
 enum e_left_pga_src{ e_left_pga_mic, e_left_pga_lin };
 enum e_right_pga_src{ e_right_pga_mic, e_right_pga_lin };
 enum e_left_in_mix_srcs{ e_lim_Left_PGA, e_lim_LeftLine, e_lim_LeftAux };
-enum e_right_in_mix_srcs{ e_rim_RightMic, e_rim_RightLine, e_rim_RightAux };
+enum e_right_in_mix_srcs{ e_rim_Right_PGA, e_rim_RightLine, e_rim_RightAux };
 enum e_left_main_mix_srcs{ e_lmm_LeftAux, e_lmm_LeftInputMixer, e_lmm_LeftDAC, e_lmm_RightDAC };
 enum e_right_main_mix_srcs{ e_rmm_RightAux, e_rmm_RightInputMixer, e_rmm_RightDAC, e_rmm_LeftDAC };
 enum e_aux_1_mix_srcs{ e_a1m_LeftMainMixer, e_a1m_RightDAC, e_a1m_LeftDAC, e_a1m_RightInputMixer };
