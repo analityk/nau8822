@@ -1,0 +1,804 @@
+/*
+ * GccApplication2.cpp
+ *  uC - ATSAME70Q21A, https://uk.farnell.com/microchip/atsame70-xpld/eval-board-atsame70-32bit-mcu/dp/2508321
+ * Created: 2020-01-16 19:36:51
+ * Author : Szymon
+ */
+
+#include "conf_eth.h"
+#include "mini_ip.h"
+#include <NAU8812.h>
+#include <array.h>
+#include <asf.h>
+#include <i2c_soft.h>
+#include <math.h>
+#include <string.h>
+#include <class_gpio.h>
+#include <class_i2c.h>
+#include <class_nau8822.h>
+
+#define BITS_BY_SLOT	16
+#define TOTAL_BUFFERS	2
+
+#define XDMA_SSC_TX_CH	0
+#define XDMA_SSC_RX_CH	1
+
+#define JEDENKODEK	1
+//#define DWAKODEKI	1
+
+//#define MAX_DMA_SIZE	500
+
+#define MAX_DMA_SIZE	1000
+
+
+uint32_t volatile xdmac_chan_0_status = 0;
+uint32_t volatile xdmac_chan_1_status = 0;
+
+uint8_t volatile manage_byte = 0;
+
+uint8_t volatile record = 0;
+
+uint8_t head_vol = 10;
+uint8_t pc_vol = 7;
+
+COMPILER_ALIGNED(8)
+lld_view1 linklist_write[TOTAL_BUFFERS];
+lld_view1 linklist_read[TOTAL_BUFFERS];
+
+
+COMPILER_ALIGNED(8)
+int16_t TxAudioBuffer[TOTAL_BUFFERS][MAX_DMA_SIZE * (BITS_BY_SLOT/8)];
+int16_t RxAudioBuffer[TOTAL_BUFFERS][MAX_DMA_SIZE * (BITS_BY_SLOT/8)];
+COMPILER_PACK_RESET();
+
+void delay(uint32_t volatile t)
+{
+    while (t--) {
+    };
+};
+
+DTCM uint8_t gs_uc_mac_address[] = {
+    ETHERNET_CONF_ETHADDR0, ETHERNET_CONF_ETHADDR1, ETHERNET_CONF_ETHADDR2,
+    ETHERNET_CONF_ETHADDR3, ETHERNET_CONF_ETHADDR4, ETHERNET_CONF_ETHADDR5
+};
+
+DTCM uint8_t gs_uc_ip_address[] = { 192, 168, 0, 20 };
+
+/** The GMAC driver instance */
+DTCM gmac_device_t gs_gmac_dev;
+
+/** Buffer for ethernet packets */
+DTCM volatile uint8_t gs_uc_eth_buffer_a[GMAC_FRAME_LENTGH_MAX];
+
+DTCM volatile uint8_t temp_udp_header[42];
+
+DTCM volatile uint8_t bc = 0;
+
+DTCM volatile uint32_t del = 0x4FFFFF;
+
+DTCM uint16_t volatile ptr_a = 0;
+DTCM uint16_t volatile ptr_b = 0;
+
+DTCM uint8_t volatile active_read_buffer = 0;
+
+DTCM volatile uint8_t ba_lock = 0;
+DTCM volatile uint8_t bb_lock = 1;
+
+uint8_t volatile tx_swch = 0;
+uint8_t volatile rx_swch = 0;
+
+uint8_t volatile rx_ba = 0;
+uint8_t volatile rx_bb = 0;
+
+
+uint32_t volatile long_time = 0;
+uint8_t volatile ledstate = 0;
+
+uint16_t gmac_icmp_checksum(uint16_t* p_buff, uint32_t ul_len)
+{
+    uint32_t i, ul_tmp;
+
+    for (i = 0, ul_tmp = 0; i < ul_len; i++, p_buff++) {
+        ul_tmp += SWAP16(*p_buff);
+    };
+    ul_tmp = (ul_tmp & 0xffff) + (ul_tmp >> 16);
+
+    return (uint16_t)(~ul_tmp);
+};
+
+uint16_t gmac_ip_checksum(p_ip_header_t ph)
+{
+    // how many 4B words is in ip header -> words is two times more
+    uint16_t words = 2 * (ph->ip_hl_v & 0x0F);
+    // don't include actual checksum of ip header
+    ph->ip_sum = 0;
+    // ip header is always 4 byte multiplies, use pointer to memory like uint16_t
+    uint16_t* p_buff = (uint16_t*)ph;
+
+    uint32_t i, ul_tmp = 0;
+
+    for (i = 0; i < words; i++, p_buff++) {
+        ul_tmp += SWAP16(*p_buff);
+    };
+    ul_tmp = (ul_tmp & 0xffff) + (ul_tmp >> 16);
+    ul_tmp = (ul_tmp & 0xffff) + (ul_tmp >> 16);
+    return (uint16_t)(~ul_tmp);
+};
+
+uint16_t udp_new_packet_length(uint8_t* p_uc_data, uint16_t new_payload_size)
+{
+
+    p_ip_header_t ip_header = (p_ip_header_t)(p_uc_data + ETH_HEADER_SIZE);
+    p_udp_header_t udp_header = (p_udp_header_t)(p_uc_data + ETH_HEADER_SIZE + ETH_IP_HEADER_SIZE);
+
+    // udp frame = udp header size plus udp payload
+    uint16_t udp_frame_size = ETH_UDP_HEADER_SIZE + new_payload_size;
+
+    // total bytes for by mac = eth header + ip_total_len (ip header + udp header + udp payload)
+    uint16_t gmac_payload = ETH_HEADER_SIZE + ETH_IP_HEADER_SIZE + udp_frame_size;
+
+    // ip frame size = ip header + udp header + udp payload
+    uint16_t ip_frame_size = udp_frame_size + ETH_IP_HEADER_SIZE;
+
+    uint16_t udp_datalen = udp_frame_size - ETH_UDP_HEADER_SIZE;
+
+    ip_header->ip_len = SWAP16(ip_frame_size);
+
+    udp_header->length = SWAP16(udp_frame_size);
+
+    uint16_t crc = gmac_ip_checksum(ip_header);
+    ip_header->ip_sum = SWAP16(crc);
+
+    return gmac_payload;
+};
+
+uint8_t volatile pck_rec = 0;
+
+void gmac_process_udp_packet(uint8_t* p_uc_data, uint32_t ul_size)
+{
+    UNUSED(ul_size);
+
+    p_ethernet_header_t p_eth = (p_ethernet_header_t)p_uc_data;
+    p_ip_header_t ip_header = (p_ip_header_t)(p_uc_data + ETH_HEADER_SIZE);
+    p_udp_header_t udp_header = (p_udp_header_t)(p_uc_data + ETH_HEADER_SIZE + ETH_IP_HEADER_SIZE);
+    uint8_t* udp_pdata = (uint8_t*)(p_uc_data + ETH_HEADER_SIZE + ETH_IP_HEADER_SIZE + ETH_UDP_HEADER_SIZE);
+    uint16_t raw_data_payload = SWAP16(udp_header->length) - ETH_UDP_HEADER_SIZE;
+
+    /* Swap the UDP port destination and source */
+    uint16_t rp = udp_header->scr_port;
+    udp_header->scr_port = udp_header->dst_port;
+    udp_header->dst_port = rp;
+
+    /* Swap the IP destination  address and the IP source address */
+    for (uint8_t i = 0; i < 4; i++) {
+        ip_header->ip_dst[i] = ip_header->ip_src[i];
+        ip_header->ip_src[i] = gs_uc_ip_address[i];
+    };
+
+    /* Swap ethernet destination address and ethernet source address */
+    for (uint8_t i = 0; i < 6; i++) {
+        /* Swap ethernet destination address and ethernet source address */
+        p_eth->et_dest[i] = p_eth->et_src[i];
+        p_eth->et_src[i] = gs_uc_mac_address[i];
+    };
+
+	// port numbers was swaped
+	if(SWAP16(udp_header->scr_port) != 52001)return;
+
+	while((ba_lock == 1) && (bb_lock == 1)){};
+
+    if( ba_lock == 0 ){
+
+
+//#ifdef JEDENKODEK
+	    //uint16_t volatile rdo = 0;
+	    //for(uint16_t i=0; i<500; i++){
+		    //TxAudioBuffer[0][i] = (udp_pdata[rdo + 1] << 8) | (udp_pdata[rdo]);
+		    //rdo += 2;
+	    //};
+//#endif
+
+		uint16_t volatile tabn = 0;
+		uint16_t volatile udpn = 0;
+		for(uint16_t volatile i=0; i<500; i++){
+			TxAudioBuffer[0][tabn + 0] = (udp_pdata[udpn + 1] << 8) | (udp_pdata[udpn + 0]);
+			TxAudioBuffer[0][tabn + 1] = (udp_pdata[udpn + 3] << 8) | (udp_pdata[udpn + 2]);
+			TxAudioBuffer[0][tabn + 2] = TxAudioBuffer[0][tabn + 0];
+			TxAudioBuffer[0][tabn + 3] = TxAudioBuffer[0][tabn + 1];
+			tabn += 4;
+			udpn += 4;
+		};
+
+	    ba_lock = 1;
+    };
+
+    if( bb_lock == 0 ){
+//#ifdef JEDENKODEK
+	    //uint16_t volatile rdo = 0;
+	    //for(uint16_t i=0; i<500; i++){
+		    //TxAudioBuffer[1][i] = (udp_pdata[rdo + 1] << 8) | (udp_pdata[rdo]);
+		    //rdo += 2;
+	    //};
+//#endif
+
+		uint16_t volatile tabn = 0;
+		uint16_t volatile udpn = 0;
+		for(uint16_t volatile i=0; i<500; i++){
+			TxAudioBuffer[1][tabn + 0] = (udp_pdata[udpn + 1] << 8) | (udp_pdata[udpn + 0]);
+			TxAudioBuffer[1][tabn + 1] = (udp_pdata[udpn + 3] << 8) | (udp_pdata[udpn + 2]);
+			TxAudioBuffer[1][tabn + 2] = TxAudioBuffer[1][tabn + 0];
+			TxAudioBuffer[1][tabn + 3] = TxAudioBuffer[1][tabn + 1];
+			tabn += 4;
+			udpn += 4;
+		};
+
+	    bb_lock = 1;
+    };
+
+    manage_byte = udp_pdata[1000];
+
+    if(pck_rec == 0){
+	    //ssc_enable_tx(SSC);
+	    //xdmac_channel_enable(XDMAC, XDMA_SSC_TX_CH);
+	    pck_rec = 1;
+    };
+
+    uint16_t gmac_payload = udp_new_packet_length(p_uc_data, 4);
+
+    udp_header->crc = 0;
+
+    udp_pdata[0] = xdmac_chan_0_status;
+    udp_pdata[1] = xdmac_chan_0_status << 8;
+    udp_pdata[2] = xdmac_chan_0_status << 16;
+    udp_pdata[3] = manage_byte;
+
+    gmac_dev_write(&gs_gmac_dev, GMAC_QUE_0, p_uc_data, gmac_payload, NULL);
+
+    if(pck_rec == 1){
+	    long_time = 0;
+    };
+};
+
+void gmac_process_ip_packet(uint8_t* p_uc_data, uint32_t ul_size)
+{
+    uint32_t i;
+    uint32_t ul_icmp_len;
+    int32_t ul_rc = GMAC_OK;
+
+    /* avoid Cppcheck Warning */
+    UNUSED(ul_size);
+
+    p_ethernet_header_t p_eth = (p_ethernet_header_t)p_uc_data;
+    p_ip_header_t p_ip_header = (p_ip_header_t)(p_uc_data + ETH_HEADER_SIZE);
+
+    p_icmp_echo_header_t p_icmp_echo = (p_icmp_echo_header_t)((int8_t*)p_ip_header + ETH_IP_HEADER_SIZE);
+
+    switch (p_ip_header->ip_p) {
+    case IP_PROT_UDP: {
+
+        gmac_process_udp_packet(p_uc_data, ul_size);
+
+        break;
+    };
+    case IP_PROT_ICMP:
+        if (p_icmp_echo->type == ICMP_ECHO_REQUEST) {
+            p_icmp_echo->type = ICMP_ECHO_REPLY;
+            p_icmp_echo->code = 0;
+            p_icmp_echo->cksum = 0;
+
+            /* Checksum of the ICMP message */
+            ul_icmp_len = (SWAP16(p_ip_header->ip_len) - ETH_IP_HEADER_SIZE);
+            if (ul_icmp_len % 2) {
+                *((uint8_t*)p_icmp_echo + ul_icmp_len) = 0;
+                ul_icmp_len++;
+            }
+            ul_icmp_len = ul_icmp_len / sizeof(uint16_t);
+
+            p_icmp_echo->cksum = SWAP16(gmac_icmp_checksum((uint16_t*)p_icmp_echo, ul_icmp_len));
+            /* Swap the IP destination  address and the IP source address */
+            for (i = 0; i < 4; i++) {
+                p_ip_header->ip_dst[i] = p_ip_header->ip_src[i];
+                p_ip_header->ip_src[i] = gs_uc_ip_address[i];
+            }
+            /* Swap ethernet destination address and ethernet source address */
+            for (i = 0; i < 6; i++) {
+                /* Swap ethernet destination address and ethernet source address */
+                p_eth->et_dest[i] = p_eth->et_src[i];
+                p_eth->et_src[i] = gs_uc_mac_address[i];
+            }
+            /* Send the echo_reply */
+
+            ul_rc = gmac_dev_write(&gs_gmac_dev, GMAC_QUE_0, p_uc_data, SWAP16(p_ip_header->ip_len) + ETH_HEADER_SIZE, NULL);
+
+            if (ul_rc != GMAC_OK) {
+                printf("E: ICMP Send - 0x%x\n\r", ul_rc);
+            }
+        }
+        break;
+
+    default:
+        break;
+    }
+}
+
+DTCM uint8_t volatile arp_rec = 0;
+
+void gmac_process_arp_packet(uint8_t* p_uc_data, uint32_t ul_size)
+{
+    uint32_t i;
+    uint8_t ul_rc = GMAC_OK;
+
+    p_ethernet_header_t p_eth = (p_ethernet_header_t)p_uc_data;
+    p_arp_header_t p_arp = (p_arp_header_t)(p_uc_data + ETH_HEADER_SIZE);
+
+    if (SWAP16(p_arp->ar_op) == ARP_REQUEST) {
+
+        /* ARP reply operation */
+        p_arp->ar_op = SWAP16(ARP_REPLY);
+
+        /* Fill the destination address and source address */
+        for (i = 0; i < 6; i++) {
+            /* Swap ethernet destination address and ethernet source address */
+            p_eth->et_dest[i] = p_eth->et_src[i];
+            p_eth->et_src[i] = gs_uc_mac_address[i];
+            p_arp->ar_tha[i] = p_arp->ar_sha[i];
+            p_arp->ar_sha[i] = gs_uc_mac_address[i];
+        }
+        /* Swap the source IP address and the destination IP address */
+        for (i = 0; i < 4; i++) {
+            p_arp->ar_tpa[i] = p_arp->ar_spa[i];
+            p_arp->ar_spa[i] = gs_uc_ip_address[i];
+        }
+
+        ul_rc = gmac_dev_write(&gs_gmac_dev, GMAC_QUE_0, p_uc_data, ul_size, NULL);
+        if (arp_rec == 0) {
+            arp_rec = 1;
+            for (uint8_t i = 0; i < 3; i++) {
+                delay(0x8FFFFF);
+                pio_set(PIOC, PIO_PC8);
+                delay(0x8FFFFF);
+                pio_clear(PIOC, PIO_PC8);
+            };
+        };
+    };
+};
+
+static void gmac_process_eth_packet(uint8_t* p_uc_data, uint32_t ul_size)
+{
+    uint16_t us_pkt_format;
+
+    p_ethernet_header_t p_eth = (p_ethernet_header_t)(p_uc_data);
+    us_pkt_format = SWAP16(p_eth->et_protlen);
+
+    switch (us_pkt_format) {
+    /* ARP Packet format */
+    case ETH_PROT_ARP:
+        /* Process the ARP packet */
+        gmac_process_arp_packet(p_uc_data, ul_size);
+
+        break;
+
+    /* IP protocol frame */
+    case ETH_PROT_IP:
+        /* Process the IP packet */
+        gmac_process_ip_packet(p_uc_data, ul_size);
+
+        break;
+
+    default:
+        break;
+    };
+};
+
+void GMAC_Handler(void)
+{
+    gmac_handler(&gs_gmac_dev, GMAC_QUE_0);
+}
+
+/**
+ * \brief XDMAC interrupt handler.
+ */
+
+uint8_t volatile swch = 0;
+
+void XDMAC_Handler(void)
+{
+	uint32_t volatile xdmac_gis = xdmac_get_interrupt_status(XDMAC);
+	UNUSED(xdmac_gis);
+
+	xdmac_chan_0_status = xdmac_channel_get_interrupt_status(XDMAC, XDMA_SSC_TX_CH);
+	if( xdmac_chan_0_status == 1){
+		if(tx_swch == 0){
+			tx_swch = 1;
+			ba_lock = 0;
+		}else{
+			tx_swch = 0;
+			bb_lock = 0;
+		};
+	};
+
+	xdmac_chan_1_status = xdmac_channel_get_interrupt_status(XDMAC, XDMA_SSC_RX_CH);
+	if( xdmac_chan_0_status == 1){
+		if(rx_swch == 0){
+			rx_swch = 1;
+			rx_ba = 0;
+		}else{
+			rx_swch = 0;
+			rx_bb = 0;
+		};
+	};
+};
+
+xdmac_channel_config_t xdmac_ssc_tx_cfg = {0};
+xdmac_channel_config_t xdmac_ssc_rx_cfg = {0};
+
+GPIO sdaa(PIOA, PIO_PA4);
+GPIO scla(PIOA, PIO_PA3);
+
+GPIO sclb(PIOA, PIO_PA17);
+GPIO sdab(PIOC, PIO_PC9);
+
+GPIO led(PIOC, PIO_PC8);
+
+class_i2c interface_kodek_a(&sdaa, &scla);
+
+class_i2c interface_kodek_b(&sdab, &sclb);
+
+class_nau8822 kodek_a(&interface_kodek_a);
+class_nau8822 kodek_b(&interface_kodek_b);
+
+int main(void)
+{
+    /* Initialize the SAM system */
+
+    sysclk_init();
+
+    board_init();
+
+	interface_kodek_a.init();
+	interface_kodek_b.init();
+
+    pio_configure(PIOC, PIO_OUTPUT_0, PIO_PC8, PIO_PULLUP);
+
+    pio_configure(PIOD, PIO_PERIPH_B, PIO_PD26, 0); // TD, per b
+    pio_configure(PIOB, PIO_PERIPH_D, PIO_PB1, 0); // TK, per d
+    pio_configure(PIOB, PIO_PERIPH_D, PIO_PB0, 0); // TF, per d
+	pio_configure(PIOB, PIO_PERIPH_B, PIO_PB13, 0);
+
+	// 12MHz output for nau8822 MCLK
+	pmc_switch_pck_to_mainck(0, 1);
+	pmc_enable_pck(0);
+
+    pio_clear(PIOC, PIO_PC8);
+
+	pmc_enable_periph_clk(ID_SSC);
+	ssc_reset(SSC);
+
+	ssc_disable_tx(SSC);
+	ssc_disable_rx(SSC);
+
+	ssc_set_clock_divider(SSC, 5769231ul, 150000000ul);
+
+	clock_opt_t tx_clk_option;
+	data_frame_opt_t tx_data_frame_option;
+
+	tx_clk_option.ul_cks = SSC_TCMR_CKS_TK;
+	tx_clk_option.ul_cko = SSC_TCMR_CKO_NONE;
+	tx_clk_option.ul_cki = 0;//SSC_TCMR_CKI;
+	tx_clk_option.ul_ckg = SSC_TCMR_CKG_CONTINUOUS;
+	tx_clk_option.ul_start_sel = SSC_TCMR_START_TF_RISING;
+	tx_clk_option.ul_sttdly = 0;
+	tx_clk_option.ul_period = 63;
+
+	tx_data_frame_option.ul_datlen = 15;
+	tx_data_frame_option.ul_msbf = SSC_TFMR_MSBF;
+	tx_data_frame_option.ul_datnb = 3;
+	tx_data_frame_option.ul_fslen_ext = 0;
+	tx_data_frame_option.ul_fsos = SSC_TFMR_FSOS_NONE;
+	tx_data_frame_option.ul_fsedge = SSC_TFMR_FSEDGE_POSITIVE;
+	tx_data_frame_option.ul_fslen = 0;
+
+	kodek_a.reset();
+	kodek_a.mute_all();
+	kodek_a.power_up();
+	kodek_a.mute_all();
+
+		kodek_b.reset();
+		kodek_b.mute_all();
+		kodek_b.power_up();
+		kodek_b.mute_all();
+
+	kodek_a.iface->write(6, 0x0145);	// 0x0145	6.4MHz -> 44.1 smplr x (64b x 1) / 2 ch
+	kodek_a.iface->write(NAU_GPIO, 0x0014);	// 0x0014
+
+		kodek_b.iface->write(6, 0x0140);
+		kodek_b.iface->write(NAU_GPIO, 0x0014);	// 0x0014 imclk on csb
+
+	// abcdef  0x b1 3b 19
+	// 0b 1011 0001 0011 1011 0001 1001
+
+	uint16_t pllpk1 = 0x002C;
+	uint16_t pllpk2 = 0x009D;
+	uint16_t pllpk3 = 0x0113;
+
+	kodek_a.iface->write(PLL_K_1, pllpk1);
+	kodek_a.iface->write(PLL_K_2, pllpk2);
+	kodek_a.iface->write(PLL_K_3, pllpk3);
+
+		kodek_b.iface->write(PLL_K_1, pllpk1);
+		kodek_b.iface->write(PLL_K_2, pllpk2);
+		kodek_b.iface->write(PLL_K_3, pllpk3);
+
+
+	kodek_a.passthru_adc(0);
+		kodek_b.passthru_adc(0);
+
+	// time slot MSB valid on second BCLK edge after rising edge of FS
+	kodek_a.iface->write(MISC, (1<<PCMTSEN));
+	kodek_a.iface->write(AUDIO_INTERFACE, (3 << AIFMT));
+	kodek_a.iface->write(LEFT_TIME_SLOT, 32);
+	kodek_a.iface->write(RIGHT_TIME_SLOT, 48);
+
+		kodek_b.iface->write(MISC, (1<<PCMTSEN));
+		kodek_b.iface->write(AUDIO_INTERFACE, (0<<BCLKP)|(0<<LRP)|(1<<DACPHS)|(3 << AIFMT));
+		kodek_b.iface->write(LEFT_TIME_SLOT, 16);
+		kodek_b.iface->write(RIGHT_TIME_SLOT, 0);
+
+	kodek_a.eq_stream_src(eq_DAC);
+		kodek_b.eq_stream_src(eq_DAC);
+
+	kodek_a.eq_config(EQ1, EQ_80HZ, 8); // 23
+	kodek_a.eq_config(EQ2, EQ_230HZ, 12); // 19
+	kodek_a.eq_config(EQ3, EQ_650HZ, 12); // 12
+	kodek_a.eq_config(EQ4, EQ_3k2HZ, 12); // 12
+	kodek_a.eq_config(EQ5, EQ_9k0HZ, 8); // 20
+
+		kodek_b.eq_config(EQ1, EQ_80HZ, 8); // 23
+		kodek_b.eq_config(EQ2, EQ_230HZ, 12); // 19
+		kodek_b.eq_config(EQ3, EQ_650HZ, 12); // 12
+		kodek_b.eq_config(EQ4, EQ_3k2HZ, 12); // 12
+		kodek_b.eq_config(EQ5, EQ_9k0HZ, 8); // 20
+
+    //kodek_a.left_input_mixer_attach(im_AuxL, 7);
+    //kodek_a.right_input_mixer_attach(im_AuxR, 7);
+
+	kodek_a.left_main_mixer_attach(mm_LdacL, 222);
+	kodek_a.right_main_mixer_attach(mm_RdacR, 222);
+
+		kodek_b.left_main_mixer_attach(mm_LdacL, 222);
+		kodek_b.right_main_mixer_attach(mm_RdacR, 222);
+
+	kodek_a.left_headphone_gain(head_vol);
+	kodek_a.right_headphone_gain(head_vol);
+
+		kodek_b.left_headphone_gain(head_vol);
+		kodek_b.right_headphone_gain(head_vol);
+
+
+	ssc_set_transmitter(SSC, &tx_clk_option, &tx_data_frame_option);
+
+    uint16_t b = 3;
+    uint16_t c = 4;
+
+    uint32_t ul_frm_size;
+    volatile uint32_t ul_delay;
+    gmac_options_t gmac_option;
+
+    /* Enable GMAC clock */
+    pmc_enable_periph_clk(ID_GMAC);
+
+    gmac_option.uc_copy_all_frame = 0;
+    gmac_option.uc_no_boardcast = 0;
+
+    memcpy(gmac_option.uc_mac_addr, gs_uc_mac_address, sizeof(gs_uc_mac_address));
+
+    gs_gmac_dev.p_hw = GMAC;
+
+    /* Init GMAC driver structure */
+    gmac_dev_init(GMAC, &gs_gmac_dev, &gmac_option);
+    delay(0x5FFfffF);
+
+    /* Initialize DMA controller */
+    pmc_enable_periph_clk(ID_XDMAC);
+
+    xdmac_channel_disable(XDMAC, XDMA_SSC_TX_CH);
+    xdmac_channel_disable(XDMAC, XDMA_SSC_RX_CH);
+
+    xdmac_ssc_tx_cfg.mbr_cfg = XDMAC_CC_TYPE_PER_TRAN
+								| XDMAC_CC_MBSIZE_SINGLE
+								| XDMAC_CC_DSYNC_MEM2PER
+								| XDMAC_CC_CSIZE_CHK_1
+								| XDMAC_CC_DWIDTH_HALFWORD
+								| XDMAC_CC_SWREQ_HWR_CONNECTED
+								| XDMAC_CC_SIF_AHB_IF0
+								| XDMAC_CC_DIF_AHB_IF1
+								| XDMAC_CC_SAM_INCREMENTED_AM
+								| XDMAC_CC_DAM_FIXED_AM
+								| XDMAC_CC_PERID(XDMAC_CHANNEL_HWID_SSC_TX);
+
+    xdmac_ssc_rx_cfg.mbr_cfg = XDMAC_CC_TYPE_PER_TRAN
+								| XDMAC_CC_MBSIZE_SINGLE
+								| XDMAC_CC_DSYNC_PER2MEM
+								| XDMAC_CC_CSIZE_CHK_1
+								| XDMAC_CC_DWIDTH_HALFWORD
+								| XDMAC_CC_SWREQ_HWR_CONNECTED
+								| XDMAC_CC_SIF_AHB_IF0
+								| XDMAC_CC_DIF_AHB_IF1
+								| XDMAC_CC_SAM_FIXED_AM
+								| XDMAC_CC_DAM_INCREMENTED_AM
+								| XDMAC_CC_PERID(XDMAC_CHANNEL_HWID_SSC_RX);
+
+    xdmac_configure_transfer(XDMAC, XDMA_SSC_TX_CH, &xdmac_ssc_tx_cfg);
+    //xdmac_configure_transfer(XDMAC, XDMA_SSC_RX_CH, &xdmac_ssc_rx_cfg);
+
+	for(uint32_t i = 0; i < TOTAL_BUFFERS; i++){
+		linklist_write[i].mbr_ubc =	XDMAC_UBC_NVIEW_NDV1 |
+									XDMAC_UBC_NDE_FETCH_EN |
+									XDMAC_UBC_NSEN_UPDATED |
+									XDMAC_UBC_NDEN_UNCHANGED |
+									XDMAC_CUBC_UBLEN(MAX_DMA_SIZE);
+
+	    linklist_write[i].mbr_sa = (uint32_t)(& TxAudioBuffer[i]);
+	    linklist_write[i].mbr_da = (uint32_t)&(SSC->SSC_THR);
+
+	    if(i == (TOTAL_BUFFERS - 1)){
+		    linklist_write[i].mbr_nda = ((uint32_t)&linklist_write[0]);
+		}else{
+			linklist_write[i].mbr_nda = ((uint32_t)&linklist_write[i + 1]);
+	    };
+    };
+
+
+    for(uint32_t i = 0; i < TOTAL_BUFFERS; i++){
+	    linklist_read[i].mbr_ubc =	XDMAC_UBC_NVIEW_NDV1 |
+									XDMAC_UBC_NDE_FETCH_EN |
+									XDMAC_UBC_NSEN_UNCHANGED |
+									XDMAC_UBC_NDEN_UPDATED |
+									XDMAC_CUBC_UBLEN(MAX_DMA_SIZE);
+
+	    linklist_read[i].mbr_sa = (uint32_t)&(SSC->SSC_RHR);
+	    linklist_read[i].mbr_da = (uint32_t)(& RxAudioBuffer[i]);
+
+	    if( i == (TOTAL_BUFFERS - 1)){
+		    linklist_read[i].mbr_nda = ((uint32_t)&linklist_read[0]);
+		}else{
+		    linklist_read[i].mbr_nda = ((uint32_t)&linklist_read[i + 1]);
+	    };
+    };
+
+    xdmac_channel_set_descriptor_addr(XDMAC, XDMA_SSC_TX_CH, (uint32_t)(&linklist_write[0]), 0);
+    //xdmac_channel_set_descriptor_addr(XDMAC, XDMA_SSC_RX_CH, (uint32_t)(&linklist_read[0]), 0);
+
+
+    xdmac_channel_set_descriptor_control(XDMAC, XDMA_SSC_TX_CH, XDMAC_CNDC_NDVIEW_NDV1 | XDMAC_CNDC_NDE_DSCR_FETCH_EN | XDMAC_CNDC_NDSUP_SRC_PARAMS_UPDATED | XDMAC_CNDC_NDDUP_DST_PARAMS_UNCHANGED);
+    //xdmac_channel_set_descriptor_control(XDMAC, XDMA_SSC_RX_CH, XDMAC_CNDC_NDVIEW_NDV1 | XDMAC_CNDC_NDE_DSCR_FETCH_EN | XDMAC_CNDC_NDSUP_SRC_PARAMS_UNCHANGED | XDMAC_CNDC_NDDUP_DST_PARAMS_UPDATED);
+
+    xdmac_enable_interrupt(XDMAC, XDMA_SSC_TX_CH);
+    //xdmac_enable_interrupt(XDMAC, XDMA_SSC_RX_CH);
+
+    xdmac_channel_enable_interrupt(XDMAC, XDMA_SSC_TX_CH, XDMAC_CIE_BIE | XDMAC_CIE_LIE | XDMAC_CIE_DIE | XDMAC_CIE_FIE | XDMAC_CIE_RBIE | XDMAC_CIE_WBIE | XDMAC_CIE_ROIE);
+    //xdmac_channel_enable_interrupt(XDMAC, XDMA_SSC_RX_CH, XDMAC_CIE_BIE | XDMAC_CIE_LIE | XDMAC_CIE_DIE | XDMAC_CIE_FIE | XDMAC_CIE_RBIE | XDMAC_CIE_WBIE | XDMAC_CIE_ROIE);
+
+    xdmac_channel_software_flush_request(XDMAC, XDMA_SSC_TX_CH);
+    //xdmac_channel_software_flush_request(XDMAC, XDMA_SSC_RX_CH);
+
+    ssc_enable_tx(SSC);
+    xdmac_channel_enable(XDMAC, XDMA_SSC_TX_CH);
+
+    irq_initialize_vectors();
+
+    irq_register_handler(XDMAC_IRQn, 1);
+    irq_register_handler(GMAC_IRQn, 3);
+
+    Enable_global_interrupt();
+
+    /* Init MAC PHY driver */
+    if (ethernet_phy_init(GMAC, BOARD_GMAC_PHY_ADDR, sysclk_get_cpu_hz()) != GMAC_OK) {
+        bc = 3;
+    };
+
+    /* Auto Negotiate, work in RMII mode */
+    if (ethernet_phy_auto_negotiate(GMAC, BOARD_GMAC_PHY_ADDR) != GMAC_OK) {
+        bc = 4;
+    }
+
+    /* Establish ethernet link */
+    while (ethernet_phy_set_link(GMAC, BOARD_GMAC_PHY_ADDR, 1) != GMAC_OK) {
+        bc = 5;
+    };
+
+    /* Replace with your application code */
+   while (1)
+   {
+	   if( GMAC_OK == gmac_dev_read(&gs_gmac_dev, GMAC_QUE_0, (uint8_t *) gs_uc_eth_buffer_a, sizeof(gs_uc_eth_buffer_a), &ul_frm_size) ){
+		   if (ul_frm_size > 0) {
+			   gmac_process_eth_packet((uint8_t *) gs_uc_eth_buffer_a, ul_frm_size);
+		   };
+	   };
+
+	   if(manage_byte > 0){
+		   switch(manage_byte){
+			   case 1:{
+				   head_vol += 2;
+				   if(head_vol > 63){
+					   head_vol = 63;
+				   };
+				   kodek_a.left_headphone_gain(head_vol);
+				   kodek_a.right_headphone_gain(head_vol);
+
+				   kodek_b.left_headphone_gain(head_vol);
+				   kodek_b.right_headphone_gain(head_vol);
+
+				   manage_byte = 0;
+				   break;
+			   };
+			   case 2:{
+				   if(head_vol > 2){
+					   head_vol -= 2;
+				   };
+
+				   kodek_a.left_headphone_gain(head_vol);
+				   kodek_a.right_headphone_gain(head_vol);
+
+				   kodek_b.left_headphone_gain(head_vol);
+				   kodek_b.right_headphone_gain(head_vol);
+
+				   manage_byte = 0;
+				   break;
+			   };
+
+
+			   case 4:{
+				   pc_vol += 1;
+				   if(pc_vol > 7){
+					   pc_vol = 7;
+				   };
+
+					pllpk3++;
+					kodek_a.iface->write(PLL_K_3, pllpk3);
+
+				   //kodek_a.left_main_mixer_attach(mm_AuxL, pc_vol);
+				   //kodek_a.right_main_mixer_attach(mm_AuxR, pc_vol);
+
+				   //kodek_b.left_main_mixer_attach(mm_AuxL, pc_vol);
+				   //kodek_b.right_main_mixer_attach(mm_AuxR, pc_vol);
+
+				   manage_byte = 0;
+				   break;
+			   };
+
+			   case 5:{
+				   if(pc_vol > 2){
+					   pc_vol -= 1;
+				   };
+
+					pllpk3--;
+					kodek_a.iface->write(PLL_K_3, pllpk3);
+
+					//kodek_a.left_main_mixer_attach(mm_AuxL, pc_vol);
+					//kodek_a.right_main_mixer_attach(mm_AuxR, pc_vol);
+
+				   //kodek_b.left_main_mixer_attach(mm_AuxL, pc_vol);
+				   //kodek_b.right_main_mixer_attach(mm_AuxR, pc_vol);
+
+				   manage_byte = 0;
+				   break;
+			   };
+
+
+			   case 3:{
+				   pck_rec = 0;
+				   ssc_disable_tx(SSC);
+				   xdmac_channel_enable(XDMAC, 0);
+				   ba_lock = 0;
+				   bb_lock = 0;
+				   manage_byte = 0;
+				   break;
+			   };
+			   default:break;
+		   };
+
+	   };
+
+   };
+};
